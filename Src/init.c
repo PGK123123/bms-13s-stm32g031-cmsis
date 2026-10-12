@@ -1,0 +1,91 @@
+#include "init.h"
+#include "adc.h"
+#include "usart.h"
+#include "tim.h"
+uint32_t SystemCoreClock = 16000000UL;
+
+void init_clock(void){
+	// тактирование от PLL, 64 МГц, 2 такта задержка Флеш, источник HSI
+	RCC->CR |= RCC_CR_HSION;
+	while (!(RCC->CR & RCC_CR_HSIRDY));
+
+	FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY) | FLASH_ACR_LATENCY_1;
+	while ((FLASH->ACR & FLASH_ACR_LATENCY) != FLASH_ACR_LATENCY_1);
+	FLASH->ACR |= FLASH_ACR_PRFTEN | FLASH_ACR_ICEN;
+
+	RCC->CR &= ~RCC_CR_PLLON;
+	while (RCC->CR & RCC_CR_PLLRDY);
+
+	RCC->PLLCFGR = RCC_PLLCFGR_PLLSRC_HSI
+	                | (1UL << RCC_PLLCFGR_PLLM_Pos)
+	                | (16UL << RCC_PLLCFGR_PLLN_Pos)
+	                | (1UL << RCC_PLLCFGR_PLLR_Pos)
+	                | RCC_PLLCFGR_PLLREN;
+
+	RCC->CR |= RCC_CR_PLLON;
+	while (!(RCC->CR & RCC_CR_PLLRDY));
+
+	RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | RCC_CFGR_SW_1;
+	while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_1);
+
+	SystemCoreClock = 64000000UL;
+	// включение тактирования для периферии
+	RCC->IOPENR |= RCC_IOPENR_GPIOAEN | RCC_IOPENR_GPIOBEN;
+
+	RCC->APBENR2 |= RCC_APBENR2_ADCEN;
+
+	RCC->APBENR1 |= RCC_APBENR1_USART2EN;
+
+	// Задержка на 1-2 такта шины (читаем регистр, чтобы шина гарантированно синхронизировалась)
+	(void)RCC->IOPENR;
+
+}
+
+void init_peripherial(void){
+
+	timer2_init();
+
+	// настройка пинов PB4 PB5 PB6 управления мультиплексором
+	GPIOB->MODER &= ~(GPIO_MODER_MODE4 | GPIO_MODER_MODE5 | GPIO_MODER_MODE6);
+	GPIOB->MODER |= GPIO_MODER_MODE4_0 | GPIO_MODER_MODE5_0 | GPIO_MODER_MODE6_0;
+
+	GPIOB->OSPEEDR &= ~(GPIO_OSPEEDR_OSPEED4 | GPIO_OSPEEDR_OSPEED5 | GPIO_OSPEEDR_OSPEED6);
+	GPIOB->OSPEEDR |= (GPIO_OSPEEDR_OSPEED4_1 | GPIO_OSPEEDR_OSPEED5_1 | GPIO_OSPEEDR_OSPEED6_1);
+
+	GPIOB->OTYPER &= ~(GPIO_OTYPER_OT4 | GPIO_OTYPER_OT5 | GPIO_OTYPER_OT6);
+
+	GPIOB->PUPDR  &= ~(GPIO_PUPDR_PUPD4 | GPIO_PUPDR_PUPD5 | GPIO_PUPDR_PUPD6);
+
+	GPIOB->BSRR = GPIO_BSRR_BR4 | GPIO_BSRR_BR5 | GPIO_BSRR_BR6;
+
+	// настройка пинов PA1 PA4 PA5 для управления сдвиговыми регистарми
+	GPIOA->BSRR = GPIO_BSRR_BR1 | GPIO_BSRR_BR4 | GPIO_BSRR_BR5; // заранее сбрасываем, чтобы не было случайного открытия банок
+
+	GPIOA->MODER &= ~(GPIO_MODER_MODE1 | GPIO_MODER_MODE4 | GPIO_MODER_MODE5);
+	GPIOA->MODER |= GPIO_MODER_MODE1_0 | GPIO_MODER_MODE4_0 | GPIO_MODER_MODE5_0;
+
+	GPIOA->OSPEEDR &= ~(GPIO_OSPEEDR_OSPEED1 | GPIO_OSPEEDR_OSPEED4 | GPIO_OSPEEDR_OSPEED5);
+	GPIOA->OSPEEDR |= (GPIO_OSPEEDR_OSPEED1_1 | GPIO_OSPEEDR_OSPEED4_1 | GPIO_OSPEEDR_OSPEED5_1);
+
+	GPIOA->OTYPER &= ~(GPIO_OTYPER_OT1 | GPIO_OTYPER_OT4 | GPIO_OTYPER_OT5);
+
+	GPIOA->PUPDR  &= ~(GPIO_PUPDR_PUPD1 | GPIO_PUPDR_PUPD4 | GPIO_PUPDR_PUPD5);
+
+	// настройка АЦП, используется 0 канал
+	GPIOA->MODER |= GPIO_MODER_MODE0;
+	GPIOA->PUPDR &= ~GPIO_PUPDR_PUPD0;
+
+	adc_init();
+
+	// настройка USART2
+	 GPIOA->MODER &= ~(GPIO_MODER_MODE2 | GPIO_MODER_MODE3);
+	 GPIOA->MODER |=  (GPIO_MODER_MODE2_1 | GPIO_MODER_MODE3_1);
+
+	 GPIOA->AFR[0] &= ~(GPIO_AFRL_AFSEL2 | GPIO_AFRL_AFSEL3);
+	 GPIOA->AFR[0] |=  (1U << GPIO_AFRL_AFSEL2_Pos) | (1U << GPIO_AFRL_AFSEL3_Pos);
+
+	 GPIOA->PUPDR &= ~GPIO_PUPDR_PUPD3;
+	 GPIOA->PUPDR |=  GPIO_PUPDR_PUPD3_0;
+
+	 usart2_init();
+}
